@@ -1,3 +1,7 @@
+#!/bin/sh
+exec scala "$0" "$@"
+!#
+
 // #############################################################################
 // Validate reference and create cutsites file
 //
@@ -31,22 +35,34 @@ val outputFile = new PrintWriter(args(0) + ".cutSites")
 def reverseComp(c: Char): Char = if (c == 'A') 'T' else if (c == 'C') 'G' else if (c == 'G') 'C' else if (c == 'T') 'A' else c
 def reverseCompString(str: String): String = str.map{reverseComp(_)}.reverse.mkString
 
-println("Running...")
+println("Finding target sites...")
 outputFile.write("site\tposition\tcutPos\n")
-inputSites.foreach{site => {
-  val pos = inputRef.indexOf(site)
-  if (pos >= 0) {
-    println("FWD")
-    outputFile.write(site + "\t" + (pos+1) + "\t" + (pos + 1 + (site.length - 7)) + "\n")
-  } else {
-    val posRev = reverseCompString(inputRef).indexOf(site)
-    if (posRev >= 0) {
-      println("REV")
-      outputFile.write(site + "\t" + (inputRef.size - (posRev+site.size)) + "\t" + ((inputRef.size - (posRev + site.size)) + 7) + "\n")
-    } else {
-      println("No position found")
-    }
-  }
+var fwd = 0
+var rev = 0
+var outputArray = Array[Tuple3[String,Int,Int]]()
 
+inputSites.foreach{site => {
+  val sitePattern = ( site).r
+  val positions = sitePattern.findAllMatchIn(inputRef).toArray
+  
+  println(site + " " + positions.size)
+  positions.foreach{pos => {
+    if (inputRef.slice(pos.start,pos.start+20) ==  site.slice(0,20)) {
+      outputArray :+= (inputRef.slice(pos.start,pos.start+23),(pos.start+1),(pos.start + 18))
+      fwd += 1
+    }else{
+      outputArray :+= (inputRef.slice(pos.start,pos.start+23),(pos.start+1),(pos.start + 7))
+      rev += 1
+    }
+  }}
 }}
+
+scala.util.Sorting.stableSort(outputArray,(e1: (String, Int, Int), e2: (String, Int, Int)) => e1._2 < e2._2)
+outputArray.foreach{case(site,start,cutsite) => {
+  outputFile.write(site + "\t" + start + "\t" + cutsite + "\n")
+}}
+
 outputFile.close()
+println("forward " + fwd)
+println("rev " + rev)
+

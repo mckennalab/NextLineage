@@ -3,7 +3,7 @@
 /*
 
 ========================================================================================
-                         mckenna_lab/DNA_lineage
+                         mckenna_lab/paired_end_lineage
 ========================================================================================
  Converts paired-end DNA sequencing of recorders sequences into lineage calls
 ----------------------------------------------------------------------------------------
@@ -18,7 +18,7 @@ git remote -v*/
 Channel.fromPath( params.samplesheet )
         .splitCsv(header: true, sep: '\t')
         .map{ tuple(it.sample, it.umi, it.umiLength, it.reference, it.targets, it.primer5, it.primer3, it.fastq1, it.fastq2)}
-        .into{sample_table_cutsites; sample_table_fastqc; sample_table_filter; sample_table_alignment; sample_table_stats; sample_table_final_tables}
+        .into{sample_table_cutsites; sample_table_filter; sample_table_alignment; sample_table_stats; sample_table_final_tables}
 
 results_path = "results"
 primers_extension = 5
@@ -34,14 +34,14 @@ process CreateCutSitesFile {
     set sampleId, umi, umiLength, reference, targets, fwd_primer, rev_primer, fastq1, fastq2 from sample_table_cutsites
     
     output:
-    tuple sampleId, "${ref_name}.cutSites", "${ref_name}", "${ref_name}.primers" into reference_pack
+    tuple sampleId, "${ref_name}.cutSites", "${ref_name}", "${ref_name}.primers" into reference_pack, reference_pack2, reference_pack3
     
     script:
-    ref_name = new File(reference).getName()
+    ref_name = sampleId + "_" + new File(reference).getName()
     
     """
     cp ${reference} ${ref_name}
-    scala -J-Xmx4g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/fasta_to_cutsites.scala \
+    bash /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/fasta_to_cutsites_base_editing.sh \
         ${ref_name} \
         ${targets} \
         ${fwd_primer} \
@@ -49,20 +49,19 @@ process CreateCutSitesFile {
         ${primers_extension}
     """
 }
-///dartfs-hpc/admin/local/bin/fastqc
 
 /*
- * Fastqc
+ * Filter input reads, requiring that at least one of the paired reads align to the lineage recorder sequence
  */
-process FastqcReport {
+process FilterGenomicReads {
     beforeScript 'chmod o+rw .'
-    publishDir "$results_path/02_fastqc"
+    publishDir "$results_path/02_filter_genomic_reads"
 
     input:
-    set sampleId, umi, umiLength, reference, targets, fwd_primer, rev_primer, fastq1, fastq2 from sample_table_fastqc
+    set sampleId, umi, umiLength, reference, targets, fwd_primer, rev_primer, fastq1, fastq2 from sample_table_filter
     
     output:
-    tuple sampleId, "${sampleId}_fastqc" into fastqc_results
+    tuple sampleId, "${sampleId}.r1.fq.gz", "${sampleId}.r2.fq.gz", "${sampleId}.flagstat_pre.txt", "${sampleId}.post.reads.txt" into filtered_reads
     
     //when:
     //params.genome_reference?.trim()
@@ -71,49 +70,23 @@ process FastqcReport {
     ref_name = new File(reference).getName()
     
     """
-    mkdir ${sampleId}_fastqc
-    fastqc -o ${sampleId}_fastqc ${fastq1} ${fastq2} 
-    """
-}
-
-
-/*
- * Filter input reads, requiring that at least one of the paired reads align to the lineage recorder sequence
- */
-process FilterGenomicReads {
-    beforeScript 'chmod o+rw .'
-    publishDir "$results_path/03_filter_genomic_reads"
-
-    input:
-    set sampleId, umi, umiLength, reference, targets, fwd_primer, rev_primer, fastq1, fastq2 from sample_table_filter
-    
-    output:
-    tuple sampleId, "${sampleId}.r1.fq.gz", "${sampleId}.r2.fq.gz", "${sampleId}.flagstat_pre.txt", "${sampleId}.pre.reads.txt", "${sampleId}.post.reads.txt" into filtered_reads
-    file "${sampleId}_pre_post_reads.txt" into filtered_reads_analysis
-    
-    script:
-    ref_name = new File(reference).getName()
-    
-    """
-    zcat ${fastq1}| wc > ${sampleId}.pre.reads.txt
     bwa mem ${params.genome_reference} ${fastq1} ${fastq2} | samtools sort -o output.bam -
     samtools flagstat output.bam > ${sampleId}.flagstat_pre.txt
     samtools index output.bam
     samtools view -H output.bam > header.sam
     samtools view output.bam ${params.bait_seq_name} | cut -f1 > IDs.txt
-    LC_ALL=C grep -w -F -f IDs.txt <(samtools view output.bam) | cat header.sam - | samtools collate -f -u -O - | samtools fastq -i -1 ${sampleId}.r1.fq.gz -2 ${sampleId}.r2.fq.gz -0 /dev/null -s /dev/null -n -
-    rm output.bam*
+    LC_ALL=C grep -w -F -f IDs.txt <(samtools view output.bam) | cat header.sam - | samtools collate -u -O - | samtools fastq -1 ${sampleId}.r1.fq.gz -2 ${sampleId}.r2.fq.gz -0 /dev/null -s /dev/null -n -
     zcat ${sampleId}.r1.fq.gz | wc > ${sampleId}.post.reads.txt
-    cat ${sampleId}.pre.reads.txt ${sampleId}.post.reads.txt > ${sampleId}_pre_post_reads.txt
     """
 }
+
 
 /*
  * merge paired reads on overlapping sequences using 
  */
 process MergeReads {
     beforeScript 'chmod o+rw .'
-    publishDir "$results_path/04_ng_trim"
+    publishDir "$results_path/03_ng_trim"
 
     input:
     tuple sampleId, read1, read2, flagstat, post_read_counts from filtered_reads
@@ -134,7 +107,7 @@ process MergeReads {
  */
 process InterleaveUnmergedReads {
     beforeScript 'chmod o+rw .'
-    publishDir "$results_path/05_interleaved"
+    publishDir "$results_path/04_interleaved"
 
     input:
     tuple sampleId, merged, read1, read2 from merged_reads
@@ -145,7 +118,7 @@ process InterleaveUnmergedReads {
     script:
     
     """
-    scala -J-Xmx4g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/zip_two_read_files.scala \
+    scala /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/zip_two_read_files.scala \
     ${read1} ${read2} ${sampleId}_interleaved.fq _ _
     gzip ${sampleId}_interleaved.fq
     """
@@ -159,7 +132,7 @@ phased_ref_reads_for_alignment = sample_table_alignment.phase(merged_and_interle
  */
 process AlignReads {
     beforeScript 'chmod o+rw .'
-    publishDir "$results_path/06_alignment"
+    publishDir "$results_path/05_alignment"
 
     input:
     val tuple_pack from phased_ref_reads_for_alignment
@@ -171,7 +144,7 @@ process AlignReads {
     sampleId = tuple_pack.get(0).get(0)
     reference = tuple_pack.get(0).get(3)
     merged_reads = tuple_pack.get(1).get(1)
-    interleaved_reads = tuple_pack.get(1).get(2)
+    interleaved_reads = tuple_pack.get(1).get(1)
 
     """
     cp ${merged_reads}  ./merged_reads.fastq.gz
@@ -180,7 +153,7 @@ process AlignReads {
     cp ${interleaved_reads}  ./interleaved_reads.fastq.gz
     gunzip ./interleaved_reads.fastq.gz
 
-    scala -J-Xmx16g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/align_merged_unmerged_reads.scala \
+    scala /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/align_merged_unmerged_reads.scala \
     /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/resources/EDNAFULL.Ns_are_zero \
     ${params.aligner} \
     ./merged_reads.fastq \
@@ -200,29 +173,28 @@ process AlignReads {
     """
 }
 
-aligned_reads_phased = sample_table_stats.phase(aligned_reads)
+aligned_reads_phased = reference_pack.phase(aligned_reads)
 
 /*
  * Given the aligned reads, call the events over the recorders
  */
 process CallEvents {
     beforeScript 'chmod o+rw .'
-    publishDir "$results_path/07_event_calls"
+    publishDir "$results_path/06_event_calls"
 
     input:
     val tuple_pack from aligned_reads_phased
     
     output:
     tuple sampleId, "${sampleId}.stats.gz" into stats_file
-    path "${sampleId}.stats.gz" into stats_file_eval
-
+    
     script:
     sampleId = tuple_pack.get(0).get(0)
-    reference = tuple_pack.get(0).get(3)
-    cutSites = tuple_pack.get(0).get(3) + ".cutSites"
-    primers = tuple_pack.get(0).get(3) + ".primers"
+    reference = tuple_pack.get(0).get(2)
+    cutSites = tuple_pack.get(0).get(1)
+    primers = tuple_pack.get(0).get(3)
     merged_alignments = tuple_pack.get(1).get(1)
-    interleaved_alignments = tuple_pack.get(1).get(2)
+    interleaved_alignments = tuple_pack.get(1).get(1)
 
     """
     cp ${merged_alignments} merged.fasta.gz
@@ -250,14 +222,15 @@ process CallEvents {
     """
 }
 
-stats_file_phased = sample_table_final_tables.phase(stats_file)
+stats_phased = reference_pack2.phase(stats_file)
+stats_phased.into{stats_file_for_base_edits; stats_file_phased}
 
 /*
  * Generate a number of derivative files from the stats 
  */
 process BreakdownFiles {
     beforeScript 'chmod o+rw .'
-    publishDir "$results_path/08_breakdown_files"
+    publishDir "$results_path/07_breakdown_files"
 
     input:
     val tuple_pack from stats_file_phased
@@ -267,16 +240,16 @@ process BreakdownFiles {
     
     script:
     sampleId = tuple_pack.get(0).get(0)
-    reference = tuple_pack.get(0).get(3)
-    cutSites = tuple_pack.get(0).get(3) + ".cutSites"
-    primers = tuple_pack.get(0).get(3) + ".primers"
+    reference = tuple_pack.get(0).get(2)
+    cutSites = tuple_pack.get(0).get(1)
+    primers = tuple_pack.get(0).get(3)
     stats = tuple_pack.get(1).get(1)
 
     """
     cp ${stats} ./sample.stats.gz
     gunzip ./sample.stats.gz
 
-    scala -J-Xmx4g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/stats_to_javascript_tables.scala \
+    scala /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/stats_to_javascript_tables.scala \
     sample.stats \
     ${sampleId}.perBase \
     ${sampleId}.topReadEvents \
@@ -291,77 +264,58 @@ process BreakdownFiles {
     """
 }
 
-process ReadFilterQC {
+/*
+ * Generate a number of derivative files from the stats 
+ */
+process CallBaseEdits {
     beforeScript 'chmod o+rw .'
-    publishDir "$results_path/09_read_filter_assessment"
+    publishDir "$results_path/08_base_editing"
 
     input:
-    file pre_post from filtered_reads_analysis.toList()
+    val tuple_pack from stats_file_for_base_edits
     
     output:
-    path "genome_filter_assessment_mqc.tsv" into read_filter_assessment2
+    tuple sampleId, "${sampleId}.baseEditCalls" into basecalls
     
     script:
+    sampleId = tuple_pack.get(0).get(0)
+    reference = tuple_pack.get(0).get(2)
+    cutSites = tuple_pack.get(0).get(1)
+    primers = tuple_pack.get(0).get(3)
+    stats = tuple_pack.get(1).get(1)
+
     """
-    python /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/read_qc.py \
-    --pre_post_stats ${pre_post.collect().join(",")} \
-    --output_filter genome_filter_assessment_mqc.tsv
+    cp ${stats} ./sample.stats.gz
+    gunzip ./sample.stats.gz
+
+    bash /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/base_editing_multi_target_analysis.sh \
+    sample.stats \
+    ${sampleId} \
+    ${sampleId}.baseEditCalls \
+    ${cutSites}
+
+    rm sample.stats
     """
 }
 
-process StatsAssessment {
-    publishDir "$results_path/10_stats_assessment"
-
-    input:
-    file stats from stats_file_eval.toList()
-
-    output:
-    tuple "stat_meta_qc_assessment_mqc.tsv", "target_assessment_mqc.tsv" into stats_assessment
-    
-    script:
-
-    """
-    python /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/stats_qc.py \
-    --stats ${stats.collect().join(",")} \
-    --output_edits target_assessment_mqc.tsv \
-    --output_stats stat_meta_qc_assessment_mqc.tsv
-    """
-}
-
-//results_path
-// var command = scalaPath + " -J-Xmx6g " + scriptLoc + "/" + toJSTableScript + " " + stats + " " + perBase + " " + topR + " " + topReadC + " " + allReadC + " " + cuts + " " + perBaseES + " " + convertUnknownsToNone + " " + ref
-
-
-
- /* Create the cutSites location file and validate their primers
- 
-process ExtractUmis {
+/*
+ * Generate a number of derivative files from the stats 
+ */
+process BaseEditingSummary {
     beforeScript 'chmod o+rw .'
-    publishDir "$results_path/umis"
-
+    publishDir "$results_path/09_base_summary"
 
     input:
-    set sampleId, umi, reference, targets, fwd_primer, rev_primer, fastq1, fastq2, indexFastq1, indexFastq2, index1, index2 from sample_table
-
-    when:
-    umi == "TRUE"
-
-    output:
-    path "${ref_name}.cutSites" into cutSites
-    path "${ref_name}" into ref
-    path "${ref_name}.primers" into primers
-
-    script:
-    ref_name = new File(reference).getName()
+    tuple sampleId, baseEditing from basecalls
     
+    output:
+    tuple sampleId, "${sampleId}_editing_summary.txt", "${sampleId}_editing_positions.txt" into baseEditingSummary
+    
+    script:
+
     """
-    cp ${reference} ${ref_name}
-    scala /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/fasta_to_cutsites.scala \
-        ${ref_name} \
-        ${targets} \
-        ${fwd_primer} \
-        ${rev_primer} \
-        ${primers_extension}
+    Rscript /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/base_editing_summary.R \
+    ${sampleId} \
+    ${baseEditing}
     """
 }
-*/

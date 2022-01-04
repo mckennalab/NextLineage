@@ -3,7 +3,7 @@
 /*
 
 ========================================================================================
-                         mckenna_lab/RNA_10X_single_cell_lineage
+                         mckenna_lab/DNA pipeline
 ========================================================================================
  Converts paired-end DNA sequencing of recorders sequences into lineage calls
 ----------------------------------------------------------------------------------------
@@ -30,8 +30,8 @@ params.trim_read_bases
 
 Channel.fromPath( params.samplesheet )
         .splitCsv(header: true, sep: '\t')
-        .map{ tuple(it.sample, it.reference, it.sites, it.read, it.barcode, it.umi)}
-        .into{sample_table_cutsites; sample_table_fastqc}
+        .map{ tuple(it.sample, it.reference, it.targets, it.read1, it.read2)}
+        .into{sample_table_cutsites; sample_table_fastqc; sample_table_print}
 
 results_path = "results"
 primers_extension = 5
@@ -44,10 +44,10 @@ process CreateCutSitesFile {
     publishDir "$results_path/01_cutSites"
 
     input:
-    set sampleId, reference, targets, read, barcode, umi from sample_table_cutsites
+    set sampleId, reference, targets, read1, read2 from sample_table_cutsites
 
     output:
-    set sampleId, "${sampleId}.fa", targets, read, barcode, umi, "${sampleId}.fa.cutSites", "${sampleId}.fa.primers" into reference_pack
+    set sampleId, "${sampleId}.fa", targets, read1, read2, "${sampleId}.fa.cutSites", "${sampleId}.fa.primers" into reference_pack
     
     script:
     
@@ -70,16 +70,16 @@ process FastqcReport {
     publishDir "$results_path/02_fastqc"
 
     input:
-    set sampleId, reference, targets, read, barcode, umi from sample_table_fastqc
+    set sampleId, reference, targets, read1, read2 from sample_table_fastqc
     
     output:
-    set sampleId, reference, targets, read, barcode, umi, "${sampleId}_fastqc" into fastqc_results
+    set sampleId, reference, targets, read1, read2, "${sampleId}_fastqc" into fastqc_results
     
     script:
     
     """
     mkdir ${sampleId}_fastqc
-    fastqc -o ${sampleId}_fastqc ${read} ${barcode} ${umi}
+    /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/tools/FastQC/fastqc -o ${sampleId}_fastqc ${read1} ${read2}
     """
 }
 
@@ -87,35 +87,27 @@ process FastqcReport {
  * Filter input reads, requiring that at least one of the paired reads align to the lineage recorder sequence
  */
 process FilterGenomicReads {
-    errorStrategy 'ignore'
     beforeScript 'chmod o+rw .'
     publishDir "$results_path/03_filter_genomic_reads"
 
     input:
-    set sampleId, reference, targets, read, barcode, umi, cutsites, primers from reference_pack
+    set sampleId, reference, targets, read1, read2, cutsites, primers from reference_pack
     
     output:
-    set sampleId, reference, targets, "${sampleId}.read.fq.gz", "${sampleId}.barcode.fq.gz", "${sampleId}.umi.fq.gz", cutsites, primers into filtered_reads
+    set sampleId, reference, targets, "${sampleId}.read.fq.gz", "${sampleId}.barcode.fq.gz", cutsites, primers into filtered_reads
     file "${sampleId}_pre_post_reads.txt" into filtered_reads_analysis
     
     script:
-    
-    umi_string = "--umi " + umi
-    fl = file(umi)
-    if (!fl.exists()) {
-        umi_string = ""
-    }
 
     """
-    zcat ${read}| wc > ${sampleId}.pre.reads.txt
+    zcat ${read1}| wc > ${sampleId}.pre.reads.txt
 
     python /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/filter_by_alignment.py \
     --reference_genome ${params.organism_reference} \
     --reference_gestalt_name ${params.bait_seq_name} \
-    --read1 ${read} \
-    --barcode ${barcode} \
-    --output_sample_prefix ${sampleId} \
-    ${umi_string}
+    --read1 ${read1} \
+    --barcode ${read2} \
+    --output_sample_prefix ${sampleId}
 
     zcat ${sampleId}.read.fq.gz | wc > ${sampleId}.post.reads.txt
     cat ${sampleId}.pre.reads.txt ${sampleId}.post.reads.txt > ${sampleId}_pre_post_reads.txt
@@ -123,91 +115,93 @@ process FilterGenomicReads {
 }
 
 /*
- * move the second read fastq file to the front of the first read
+ * merge paired reads on overlapping sequences using 
  */
-process MoveFirstRead {
+process MergeReads {
     beforeScript 'chmod o+rw .'
-    publishDir "$results_path/04_collapse_to_sequence"
+    publishDir "$results_path/04_ng_trim"
 
     input:
-    set sampleId, reference, targets, read, barcode, umi, cutsites, primers from filtered_reads
+    set sampleId, reference, targets, read1, read2, cutsites, primers from filtered_reads
     
     output:
-    set sampleId, reference, targets, "${sampleId}.umiMerged.fastq.gz", cutsites, primers into combined_reads
-
-    script:
+    set sampleId, reference, targets, "${sampleId}_merged.fastq.gz", "${sampleId}_single_1.fastq.gz", "${sampleId}_single_2.fastq.gz", cutsites, primers into merged_reads
     
-    umi_string = "--umi " + umi
-    fl = file(umi)
-    if (!fl.exists()) {
-        umi_string = ""
-    }
-
+    script:
     """
-    python /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/attach_read_UMIs.py --read1 ${read} --barcode ${barcode} --trimbases ${params.trim_read_bases} --outputfastq ${sampleId}.umiMerged.fastq.gz ${umi_string}
+    /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/NGmerge/NGmerge \
+    -1 ${read1} -2 ${read2} -o ${sampleId}_merged.fastq -f ${sampleId}_single
     """
 }
 
-process ExtractUmis {
+/*
+ * Zip together read pairs from the unmerged reads into a single, interleaved file
+ */
+process InterleaveUnmergedReads {
     beforeScript 'chmod o+rw .'
-    //errorStrategy 'ignore'
-    publishDir "$results_path/05_umi_collapse"
+    publishDir "$results_path/05_interleaved"
 
     input:
-    set sampleId, reference, targets, combined_reads, cutsites, primers from combined_reads
-
+    set sampleId, reference, targets, mergedReads, read1, read2, cutsites, primers from merged_reads
+    
     output:
-    set sampleId, reference, targets, "${sampleId}.fasta", cutsites, primers into extracted_umis
-    tuple sampleId, "${sampleId}.fasta", "${sampleId}.umiCounts" into extracted_umis_stats
+    set sampleId, reference, targets, mergedReads, "${sampleId}_interleaved.fq.gz", cutsites, primers into interleaved_reads
 
     script:
-
     """
-    
-    java -jar -Xmx16g /dartfs/rc/lab/M/McKennaLab/resources/GESTALT/SingleCellLineage/UMIMerge/target/scala-2.12/MergeAndCall.jar \
-    UMIMerge \
-    -inputReads1=${combined_reads} \
-    -umiStart=${params.umiStart} \
-    -minimumUMIReads=${params.minUMIReadCount} \
-    -umiLength=${params.umiLength} \
-    -umiStatsFile=${sampleId}.umiCounts \
-    -primers=${primers} \
-    -primersToCheck=${params.primersToCheck} \
-    -primerMismatches=${params.primerMismatchCount} \
-    -outputReads1=${sampleId}.fasta
-
+    scala -J-Xmx4g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/zip_two_read_files.scala \
+    ${read1} ${read2} ${sampleId}_interleaved.fq _ _
+    gzip ${sampleId}_interleaved.fq
     """
 }
-
 
 /*
  * Zip together read-pairs from the unmerged reads into a single, interleaved file
  */
 process AlignReads {
+    memory '32 GB'
+    cpus 20
+    time '12h'
     beforeScript 'chmod o+rw .'
-    errorStrategy 'ignore'
     publishDir "$results_path/06_alignment"
-
+    
     input:
-    set sampleId, reference, targets, umis_fasta, cutsites, primers from extracted_umis
+    set sampleId, reference, targets, mergedReads, interleavedReads, cutsites, primers from interleaved_reads
     
     output:
-    set sampleId, reference, targets, "${sampleId}.merged.fasta.gz", cutsites, primers into aligned_reads
+    set sampleId, reference, targets, "${sampleId}.merged.fasta.gz", "${sampleId}.interleavedReads.fasta.gz", cutsites, primers into aligned_reads
     
     script:
 
     """
-    scala -J-Xmx16g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/align_merged_reads.scala \
+    cp ${mergedReads} merged.fastq.gz
+    gunzip merged.fastq.gz
+
+    scala -J-Xmx4g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/align_merged_reads.scala \
     /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/resources/EDNAFULL.Ns_are_zero \
     ${params.aligner} \
-    ${umis_fasta} \
+    merged.fastq \
     ${reference} \
     ${sampleId}.merged.fasta \
     10 \
-    0.5
+    0.5 \
+    FALSE 
+
+    cp ${interleavedReads} interleavedReads.fastq.gz
+    gunzip interleavedReads.fastq.gz
+
+    scala -J-Xmx4g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/align_merged_reads.scala \
+    /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/resources/EDNAFULL.Ns_are_zero \
+    ${params.aligner} \
+    interleavedReads.fastq \
+    ${reference} \
+    ${sampleId}.interleavedReads.fasta \
+    10 \
+    0.5 \
+    TRUE
 
     gzip ${sampleId}.merged.fasta
-
+    gzip ${sampleId}.interleavedReads.fasta
     """
 }
 
@@ -216,12 +210,13 @@ process AlignReads {
  * Given the aligned reads, call the events over the recorders
  */
 process CallEvents {
+    memory '12 GB'
     beforeScript 'chmod o+rw .'
-    errorStrategy 'ignore'
     publishDir "$results_path/07_event_calls"
 
     input:
-    set sampleId, reference, targets, aligned_fasta, cutsites, primers from aligned_reads
+    set sampleId, reference, targets, merged_aligned_reads, interleaved_aligned_reads, cutsites, primers from aligned_reads
+    
     
     output:
     set sampleId, reference, targets, "${sampleId}.stats.gz", cutsites, primers into stats_output
@@ -230,12 +225,14 @@ process CallEvents {
     script:
 
     """
-    cp ${aligned_fasta} merged.fasta.gz
+    cp ${merged_aligned_reads} merged.fasta.gz
     gunzip merged.fasta.gz
+    cp ${interleaved_aligned_reads} interleaved.fasta.gz
+    gunzip interleaved.fasta.gz
 
-
-    java -jar -Xmx16g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/single_cell/bin/MergeAndCall.jar \
+    java -jar -Xmx11g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/bin/MergeAndCall.jar \
     DeepSeq \
+    -inputFileUnmerged=interleaved.fasta \
     -inputMerged=merged.fasta \
     -cutSites=${cutsites} \
     -outputStats=${sampleId}.stats \
@@ -244,9 +241,11 @@ process CallEvents {
     -primerMismatches=${params.primerMismatchCount} \
     -primersToCheck=FORWARD \
     -requiredMatchingProp=${params.alignmentThreshold} \
-    -requiredRemainingBases=${params.minimumReadLength}
+    -requiredRemainingBases=${params.minimumReadLength} \
+    -cutsiteWindow=5
 
     rm merged.fasta
+    rm interleaved.fasta
 
     gzip ${sampleId}.stats
     """

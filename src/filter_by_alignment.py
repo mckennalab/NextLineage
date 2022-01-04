@@ -9,6 +9,8 @@ parser.add_argument('--reference_gestalt_name', help='what we call the GESTALT c
 parser.add_argument('--read1', help='the first read (10x) containing the actual transcript sequence',required=True)
 parser.add_argument('--barcode', help='barcode, or barcode and UMI for v2/v3 chemistry',required=True)
 parser.add_argument('--umi', help='the umi read file')
+parser.add_argument('--cpus', help='the number of CPUs',type=int)
+
 parser.add_argument('--output_sample_prefix', help='the prefix for output files (plus read.fq.gz, barcode.fq.gz, and umi.fq.gz',required=True)
 
 args = parser.parse_args()
@@ -23,7 +25,7 @@ def chunked_iterable(iterable, size):
         yield chunk
 
 temp_sam = "temp.sam"
-command_array = ["bwa","mem","-o",temp_sam,args.reference_genome,args.read1]
+command_array = ["bwa","mem","-t", str(args.cpus), "-o",temp_sam,args.reference_genome,args.read1]
 print(" ".join(command_array))
 subprocess.run(command_array)
 
@@ -38,6 +40,7 @@ reads    = chunked_iterable(gzip.open(args.read1,'rt'),4)
 barcodes = chunked_iterable(gzip.open(args.barcode,'rt'),4)
 
 reads_output    = gzip.open(args.output_sample_prefix + ".read.fq.gz", 'wt')
+reads_filtered  = gzip.open(args.output_sample_prefix + ".read_filtered.fq.gz", 'wt')
 barcodes_output = gzip.open(args.output_sample_prefix + ".barcode.fq.gz", 'wt')
 
 
@@ -57,6 +60,8 @@ if args.umi:
             barcodes_output.write(barcode[0].strip() + '\n' + barcode[1].strip() + '\n+\n' + barcode[3].strip() + '\n')
             umis_output.write(umi[0].strip() + '\n' + umi[1].strip() + '\n+\n' + umi[3].strip() + '\n')
             collected_reads += 1
+        else:
+            reads_filtered.write(read[0].strip() + '\n' + read[1].strip() + '\n+\n' + read[3].strip() + '\n')
 else:
     for read in reads:
         barcode = next(barcodes)
@@ -69,7 +74,9 @@ else:
 
 
 reads_output.close()
+reads_filtered.close()
 barcodes_output.close()
-umis_output.close()
+if args.umi:
+    umis_output.close()
 
 print(collected_reads/read_count)
