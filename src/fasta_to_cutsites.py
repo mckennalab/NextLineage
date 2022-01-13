@@ -36,6 +36,14 @@ def comp(base):
 def rev_comp(string):
   return("".join([comp(x) for x in string].reverse()))
 
+def cas_to_target_length_and_cutsite_location(cas_type):
+  if cas_type.upper() == "CAS12A":
+    return([24,23])
+  elif cas_type.upper() == "CAS9":
+    return([23,17])
+  else:
+    raise NameError("Unknown CRISPR type:" + cas_type)
+
 if __name__ == "__main__":
 
   parser = argparse.ArgumentParser(description='Create lineage pipeline files from a reference, primers, and known cutsites.',required=True)
@@ -43,7 +51,7 @@ if __name__ == "__main__":
   parser.add_argument('--sites', help='a file, with a header "stats", containing a single target site per line afterwards. No order is assumed, and multiple hits can be found within the reference for any one target',required=True)
   parser.add_argument('--forward_primer', help='the forward primer, which can be used in the lineage pipeline to ensure the read originates from this target site',required=True)
   parser.add_argument('--reverse_primer', help='the reverse primer, which can be used in the lineage pipeline to ensure the read originates from this target site',required=True)
-  parser.add_argument('--cas12a_cutsite', help='Where in a Cas12a target the double-stranded break starts (in the pam-target orientation). We assume 24 base targets',default=23,type=int)
+  parser.add_argument('--CRISPR_type', help='The CRISPR enzyme class in use. For instance, cas9, cas12a, cas9_abe, etc',required=True)
   
   args = parser.parse_args()
   print(args.accumulate(args.integers))

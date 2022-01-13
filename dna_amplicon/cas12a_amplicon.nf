@@ -1,25 +1,11 @@
 #!/usr/bin/env nextflow
 
 /*
-
 ========================================================================================
-                         mckenna_lab/DNA pipeline
+                         mckenna_lab/cas12a_amplicon
 ========================================================================================
- Converts paired-end DNA sequencing of recorders sequences into lineage calls
+ Converts paired-end DNA sequencing of Cas12a lineage recorders into event calls
 ----------------------------------------------------------------------------------------
-params.organism_reference
-params.bait_seq_name
-params.reference
-params.targets
-params.primer5
-params.primer3
-params.primers_extension
-params.aligner
-params.primerMismatchCount
-params.alignmentThreshold
-params.minimumReadLength
-params.convert_unknown_to_none
-params.trim_read_bases
 */
 
 
@@ -54,12 +40,12 @@ process CreateCutSitesFile {
     """
     cp ${reference} ${sampleId}.fa
 
-    scala -J-Xmx4g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/fasta_to_cutsites.scala \
-        ${sampleId}.fa \
-        ${targets} \
-        ${params.primer5} \
-        ${params.primer3} \
-        ${params.primers_extension}
+    scala -J-Xmx4g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/fasta_to_cutsites.py \
+        --reference ${sampleId}.fa \
+        --sites ${targets} \
+        --forward_primer ${params.primer5} \
+        --reverse_primer ${params.primer3} \
+        --CRISPR_type ${params.crispr}
     """
 }
 /*
@@ -94,8 +80,11 @@ process FilterGenomicReads {
     set sampleId, reference, targets, read1, read2, cutsites, primers from reference_pack
     
     output:
-    set sampleId, reference, targets, "${sampleId}.read.fq.gz", "${sampleId}.barcode.fq.gz", cutsites, primers into filtered_reads
+    set sampleId, reference, targets, "${sampleId}.read.fq.gz", "${sampleId}.barcode.fq.gz", cutsites, primers into genome_filtered_reads
     file "${sampleId}_pre_post_reads.txt" into filtered_reads_analysis
+    
+    when:
+    !params.filter_against_genome
     
     script:
 
@@ -112,6 +101,49 @@ process FilterGenomicReads {
     zcat ${sampleId}.read.fq.gz | wc > ${sampleId}.post.reads.txt
     cat ${sampleId}.pre.reads.txt ${sampleId}.post.reads.txt > ${sampleId}_pre_post_reads.txt
     """
+}
+
+process MergeUmis {
+    memory '20 GB'
+    beforeScript 'chmod o+rw .'
+    //errorStrategy 'ignore'
+    publishDir "$results_path/05_umi_collapse"
+
+    when:
+    params.umiLength
+
+    input:
+    set sampleId, reference, targets, read1, read2, cutsites, primers from genome_filtered_reads
+
+    output:
+    set sampleId, reference, targets, "${sampleId}_read1.fq.gz", "${sampleId}_read2.fq.gz", cutsites, primers into extracted_umis
+    tuple sampleId, "${sampleId}_read1.fq.gz", "${sampleId}_read2.fq.gz", "${sampleId}.umiCounts" into extracted_umis_stats
+
+    script:
+
+    """
+    
+    java -jar -Xmx16g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/bin/MergeAndCall.jar \
+    UMIMerge \
+    -inputReads1=${read1} \
+    -inputReads2=${read2} \
+    -umiStart=${params.umiStart} \
+    -minimumUMIReads=${params.minUMIReadCount} \
+    -umiLength=${params.umiLength} \
+    -umiStatsFile=${sampleId}.umiCounts \
+    -primers=${primers} \
+    -primersToCheck=${params.primersToCheck} \
+    -primerMismatches=${params.primerMismatchCount} \
+    -outputReads1=${sampleId}_read1.fq.gz
+    -outputReads2=${sampleId}_read2.fq.gz
+
+    """
+}
+
+if (params.umiLength) {
+    filtered_reads = extracted_umis
+} else {
+    extracted_umis = genome_filtered_reads
 }
 
 /*
