@@ -275,13 +275,14 @@ function redrawTheTopHistogram() {
 	.attr("stroke", "#888888")
 
 
+    // TODO: a lot of magic numbers in this section (triangle size, offsets), fix
     svg.selectAll('.polyline')
 	.data(cut_site_data)
         .enter()
 	.append('polygon')
 	.attr('points', "0,10 5,0 10,10")
         .attr('class', 'triangles')
-	.attr("transform", function(d) {return "translate("+String(xEvents(+d.cutPos - 1))+","+String(top_height-10)+")"})
+	.attr("transform", function(d) {return "translate("+String(xEvents(+d.cutPos - 3))+","+String(top_height-10)+")"})
         .attr("fill-opacity", .6)
         .attr("fill", "gray")
 	.attr("stroke", "#888888")
