@@ -46,7 +46,7 @@ class CRISPRInfo:
 
 def cas_to_target_length_and_cutsite_location(cas_type):
   if cas_type.upper() == "CAS12A":
-    return(CRISPRInfo(24,23))
+    return(CRISPRInfo(24,20))
   elif cas_type.upper() == "CAS9":
     return(CRISPRInfo(23,17))
   else:
