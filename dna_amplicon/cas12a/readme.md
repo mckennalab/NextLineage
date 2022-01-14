@@ -14,6 +14,8 @@ Running the pipeline is a simple command. In the example directory the [shell sc
 
 Here we're calling nextflow on our pipeline file (cas12a_amplicon.nf) using a specified samplesheet. We're also asking Nextflow to resume any previous run; if we've already run the pipeline it should pickup where we left off. This is all hopefully straightfoward. There are two main configuration files, the samplesheet listed above, as well as the nextflow.config file. 
 
+### nextflow.config
+
 The nextflow configuration file contains parameters that are common to the run as a whole. The example file looks something like:
 
 ```
@@ -58,7 +60,7 @@ setup:
 
 - ```umiStart```: where the UMI sequence (if included) starts within the reads. Read 1 starts at position 0 and offsets are positive numbers. If the UMI is on read 2, you use negitive numbers. Read 2 offsets also start at -1, so if the UMI is at the 9th base in read 1 its position would be 8, for read 2 this would be -9. 
 
-- ```umiLength```: the length of the UMI sequence
+- ```umiLength```: the length of the UMI sequence. **Setting this parameter means all samples in the run have UMIs of this length** (the samefor ```umiStart above```). For now if you have multiple UMI lengths per run, split it into multiple runs. 
 
 - ```minUMIReadCount```: when using UMIs, how many reads do we need to see before we count it as a UMI capture
 
@@ -67,3 +69,19 @@ setup:
 - ```crispr```: which CRISPR enzyme we're using. In this case, cas12a. 
 
 We also have one non-params setting here, _process.executor_. This setting can be left out, but if you have a local compute farm this allows Nextflow to run on a distributed computing system. For instance at Dartmouth, if you login to [Discovery](https://rc.dartmouth.edu/index.php/discovery-overview/), you can set this parameter to ```slurm``` like above and Nextflow will run each job in parallel, which speeds the process up immensely. 
+
+### samplesheet
+
+Our sample sheet describes the files associated with each of our samples. This is a tab-separated file with the following header and one sample per line:
+
+```sample	reference	targets	read1	read2```
+
+Columns:
+
+- ```sample```: the sample name. **No spaces**, but try to make your life easier and keep these informative, most files will have this prepended to their name
+
+- ```reference```: the reference file of just the amplicon region in fasta format. The reference can include sequencing adapters or be larger segments from a plasmid, etc, but the longer the sequence the more effort the aligner will have to put in. 
+
+- ```targets```: a list of the CRISPR target sequences, with PAMs, one per line. This file should have a header with the name ```sites```. 
+
+- ```read1``` and ```read2```: the read one (forward reads), and read 2 (reverse reads) as compressed fastq files (like something.fq.gz or something.fastq.gz). **Be careful here**: we assume read 1 should align to the reference you provide in the forward orientation, and read 2 the reference. Depending on your sequencing configuration and reference file, this could change. The pipeline doesn't check names, so if you need to put what Illumina sequenced as the second read into the read1 column (and the first illumina read into read2 column) it's fine, as long as their oriented so that read1 will be seen before read2 on the reference.
