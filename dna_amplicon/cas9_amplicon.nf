@@ -129,10 +129,11 @@ process MergeReads {
     
     script:
     """
-    /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/NGmerge/NGmerge \
+    /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/tools/NGmerge-0.3/NGmerge \
     -1 ${read1} -2 ${read2} -o ${sampleId}_merged.fastq -f ${sampleId}_single
     """
 }
+
 
 /*
  * Zip together read pairs from the unmerged reads into a single, interleaved file

@@ -18,7 +18,8 @@ def read_sites_file(sites_file):
   header = fasta.readline().strip()
   assert(header == "sites")
   for line in fasta:
-    crispr_sites += line.strip().upper()
+    crispr_sites.append(line.strip().upper())
+    print(line.strip().upper())
   return(crispr_sites)
 
 def comp(base):
@@ -34,19 +35,26 @@ def comp(base):
     return("N")
 
 def rev_comp(string):
-  return("".join([comp(x) for x in string].reverse()))
+  rev = [comp(x) for x in string]
+  rev.reverse()
+  return("".join(rev))
+
+class CRISPRInfo:
+  def __init__(self,length,cutsite):
+    self.length = length
+    self.cutsite = cutsite
 
 def cas_to_target_length_and_cutsite_location(cas_type):
   if cas_type.upper() == "CAS12A":
-    return([24,23])
+    return(CRISPRInfo(24,23))
   elif cas_type.upper() == "CAS9":
-    return([23,17])
+    return(CRISPRInfo(23,17))
   else:
     raise NameError("Unknown CRISPR type:" + cas_type)
 
 if __name__ == "__main__":
 
-  parser = argparse.ArgumentParser(description='Create lineage pipeline files from a reference, primers, and known cutsites.',required=True)
+  parser = argparse.ArgumentParser(description='Create lineage pipeline files from a reference, primers, and known cutsites.')
   parser.add_argument('--reference', help='The reference file. All auxiliary files will be created with the this path as as a basename',required=True)
   parser.add_argument('--sites', help='a file, with a header "stats", containing a single target site per line afterwards. No order is assumed, and multiple hits can be found within the reference for any one target',required=True)
   parser.add_argument('--forward_primer', help='the forward primer, which can be used in the lineage pipeline to ensure the read originates from this target site',required=True)
@@ -54,7 +62,8 @@ if __name__ == "__main__":
   parser.add_argument('--CRISPR_type', help='The CRISPR enzyme class in use. For instance, cas9, cas12a, cas9_abe, etc',required=True)
   
   args = parser.parse_args()
-  print(args.accumulate(args.integers))
+  
+  crispr_length_cutsite = cas_to_target_length_and_cutsite_location(args.CRISPR_type)
 
   primers_file  = args.reference + ".primers"
   cutsites_file = args.reference + ".cutSites"
@@ -90,13 +99,13 @@ if __name__ == "__main__":
       found_sites.append([i,site,False])
 
   sorted_found_sites = sorted(found_sites, key=lambda hit: hit[0])   # sort by position
-
+  
   for hit in sorted_found_sites:
-    cutsite = hit[0] + args.cas12a_cutsite
+    cutsite = hit[0] + crispr_length_cutsite.cutsite
     if not hit[2]:
-      cutsite = hit[0] + (24 - args.cas12a_cutsite)
+      cutsite = hit[0] + (crispr_length_cutsite.length - crispr_length_cutsite.cutsite)
 
-    output_cutsites.write(str(hit[1]) + "\t" + (hit[0] + 1) + "\t" + str(hit[0] + 1 + cutsite) + "\n")
+    output_cutsites.write(str(hit[1]) + "\t" + str(hit[0] + 1) + "\t" + str(cutsite + 1) + "\n")
 
   output_cutsites.close()
 
