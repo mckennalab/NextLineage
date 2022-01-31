@@ -313,6 +313,7 @@ process CreateSamplePlot {
     path "${sample}/read_editing_mutlihistogram.js" into js_file
     path "${sample}/JS_files.js" into js_vars
     tuple "${sample}/${sample}.perBase", "${sample}/${sample}.topReadEvents", "${sample}/${sample}.topReadEventsNew", "${sample}/${sample}.topReadCounts", "${sample}/${sample}.allReadCounts", "${sample}/${sample}.cutSites" into per_base_info
+    tuple sample, "${sample}/" into sample_dir
     
     script:
     """
@@ -332,6 +333,8 @@ process CreateSamplePlot {
     echo var top_read_melted_to_base = \\"${sample}.topReadEventsNew\\" >> ${sample}/JS_files.js
     echo var per_base_histogram_data = \\"${sample}.perBase\\" >> ${sample}/JS_files.js
     echo var cut_site_file = \\"${sample}.cutSites\\" >> ${sample}/JS_files.js
-    
+    python /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/copy_to_web.py --input_dir ./${sample}/ --sample ${sample} --project ${params.project} --webdir ${params.webdir}
+
     """
 }
+
