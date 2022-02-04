@@ -82,10 +82,10 @@ def output_stats(input_file_gz: String,
   val stats_file = Source.fromFile(input_file_gz).getLines() // fromInputStream(gis(input_file_gz)).getLines()
   val header = stats_file.next()
 
-    val targetSites = header.split("\t").zipWithIndex.filter{case(k,index) => k contains "sequence" }.map{case(k,v) => v}.toArray
-    val outcomeSites = header.split("\t").zipWithIndex.filter{case(k,index) => k contains "target" }.map{case(k,v) => v}.toArray
-
-    assert(guides.size == targetSites.size, "guide length " + guides.size + " does not equal target size " + targetSites.size)
+    val targetSites = header.split("\t").zipWithIndex.filter{case(k,index) => k contains "sequence" }.map{case(k,v) => v}.grouped(2).toArray
+    val outcomeSites = header.split("\t").zipWithIndex.filter{case(k,index) => k contains "target" }.map{case(k,v) => v}.grouped(2).toArray
+    targetSites.foreach{pair => println(pair(0) + "\t" + pair(1))}
+//    assert(guides.size == targetSites.size, "guide length " + guides.size + " does not equal target size " + targetSites.size)
   var cnt = 0
   var match_count = 0
   var known_count = 0
@@ -93,13 +93,15 @@ def output_stats(input_file_gz: String,
   var right = 0
   var both = 0
 
-  stats_file.foreach{line => {
-    val sp = line.split("\t")
+  stats_file.zipWithIndex.foreach{case(line,index) => {
+			 val sp = line.split("\t")
+			 //println(sp.size)
+			 //println(index + "---" + line)
     if ((line contains "MERGED") && (line contains "PASS")) {
       
-      targetSites.map{k => sp(k).slice(0,23)}.toArray.zipWithIndex.foreach{case(target,index) => {
-        val guide  = guides(index)
-        val outcome = sp(outcomeSites(index))
+      targetSites.map{k => sp(k(1)).slice(0,23)}.toArray.zipWithIndex.foreach{case(target,index) => {
+        val guide  = guides((index*2)+1)
+        val outcome = sp(outcomeSites(index)(0)) + "=" + sp(outcomeSites(index)(1))
         val edits = left_right_both_neither(target,guide)
         if (edits._1 == "RIGHT")
           right += 1
@@ -109,7 +111,7 @@ def output_stats(input_file_gz: String,
           both += 1
 
         val guide_target_dist = edit_distance_right_align(target,guide)
-        output_file.write(sample_name + "\t" + guide + "\t" + target + "\t" + outcome + "\t" + edits._1 + "\tpos[" + edits._2.mkString(",") + "]\t" + edit_distance_right_align(guide,target) + "\n")
+        output_file.write(sp(0) + "\t" + sample_name + "\t" + guide + "\t" + target + "\t" + outcome + "\t" + edits._1 + "\tpos[" + edits._2.mkString(",") + "]\t" + edit_distance_right_align(guide,target) + "\n")
           
       }}
     }
@@ -119,13 +121,23 @@ def output_stats(input_file_gz: String,
 val output_file = new PrintWriter(args(2))
 val inputs = Array[String](args(0))
 val sample = args(1)
-val cutSites = Source.fromFile(args(3)).getLines().drop(1).map{case(ln) => ln.split("\t")(0)}.toArray
+
+// we need to reverse comp guides that are oriented that way
+val cutSites = Source.fromFile(args(3)).getLines().drop(1).map{case(ln) => {
+								       val tks = ln.split("\t")
+								       if (tks(2).toInt - tks(1).toInt < 10) {
+									      revcomp(tks(0))
+									  } else {
+									      tks(0)
+									  }
+									  
+								   }}.toArray
 
 val knownTargets = Source.fromFile("/dartfs/rc/lab/M/McKennaLab/projects/base_editing_targets/2021_07_28_sequencing_twist_plus_Steven/known_targets.txt").getLines().map{l => l.slice(0,20)}.toArray
 
 
 
-output_file.write("sample\tguide\ttarget\toutcome\teditType\teditPositions\tdistance\n")
+output_file.write("sample\tread\tguide\ttarget\toutcome\teditType\teditPositions\tdistance\n")
 inputs.foreach{input_fl => {
   val input_file = (new File(input_fl)).getName()
   println(input_file)
@@ -135,6 +147,5 @@ inputs.foreach{input_fl => {
   output_stats(input_fl,output_file,name,cutSites,knownTargets)
 }}
 output_file.close()
-
 
 
