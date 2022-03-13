@@ -23,6 +23,7 @@ Channel.fromPath( params.samplesheet )
 results_path = "results"
 primers_extension = 5
 
+
 /*
  * Create the cutSites location file and validate their primers
  */
@@ -32,54 +33,22 @@ process CreateCutSitesFile {
 
     input:
     set sampleId, umi, umiLength, reference, targets, fwd_primer, rev_primer, fastq1, fastq2 from sample_table_cutsites
-    
+
     output:
-    tuple sampleId, "${ref_name}.cutSites", "${ref_name}", "${ref_name}.primers" into reference_pack, reference_pack2, reference_pack3
+    set sampleId, "${sampleId}.fa.cutSites", "${sampleId}.fa", "${sampleId}.fa.primers" into reference_pack, reference_pack2, reference_pack3
     
     script:
-    ref_name = sampleId + "_" + new File(reference).getName()
     
     """
-    cp ${reference} ${ref_name}
-    bash /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/fasta_to_cutsites_base_editing.sh \
-        ${ref_name} \
-        ${targets} \
-        ${fwd_primer} \
-        ${rev_primer} \
-        ${primers_extension}
-    """
-}
-
-/*
- * Filter input reads, requiring that at least one of the paired reads align to the lineage recorder sequence
- */
-process FilterGenomicReads {
-    beforeScript 'chmod o+rw .'
-    publishDir "$results_path/02_filter_genomic_reads"
-
-    input:
-    set sampleId, umi, umiLength, reference, targets, fwd_primer, rev_primer, fastq1, fastq2 from sample_table_filter
-    
-    output:
-    tuple sampleId, "${sampleId}.r1.fq.gz", "${sampleId}.r2.fq.gz", "${sampleId}.flagstat_pre.txt", "${sampleId}.post.reads.txt" into filtered_reads
-    
-    //when:
-    //params.genome_reference?.trim()
-
-    script:
-    ref_name = new File(reference).getName()
-    
-    """
-    bwa mem ${params.genome_reference} ${fastq1} ${fastq2} | samtools sort -o output.bam -
-    samtools flagstat output.bam > ${sampleId}.flagstat_pre.txt
-    samtools index output.bam
-    samtools view -H output.bam > header.sam
-    samtools view output.bam ${params.bait_seq_name} | cut -f1 > IDs.txt
-    LC_ALL=C grep -w -F -f IDs.txt <(samtools view output.bam) | cat header.sam - | samtools collate -u -O - | samtools fastq -1 ${sampleId}.r1.fq.gz -2 ${sampleId}.r2.fq.gz -0 /dev/null -s /dev/null -n -
-    zcat ${sampleId}.r1.fq.gz | wc > ${sampleId}.post.reads.txt
+    cp ${reference} ${sampleId}.fa
+    python /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/fasta_to_cutsites.py \
+        --reference ${sampleId}.fa \
+        --sites ${targets} \
+        --forward_primer ${fwd_primer} \
+        --reverse_primer ${rev_primer} \
+        --CRISPR_type Cas9
     """
 }
-
 
 /*
  * merge paired reads on overlapping sequences using 
@@ -89,15 +58,15 @@ process MergeReads {
     publishDir "$results_path/03_ng_trim"
 
     input:
-    tuple sampleId, read1, read2, flagstat, post_read_counts from filtered_reads
+    set sampleId, umi, umiLength, reference, targets, fwd, rev, read1, read2 from sample_table_filter
     
     output:
-    tuple sampleId, "${sampleId}_merged.fastq.gz", "${sampleId}_single_1.fastq.gz", "${sampleId}_single_2.fastq.gz" into merged_reads
+    set sampleId, "${sampleId}_merged.fastq.gz", "${sampleId}_single_1.fastq.gz", "${sampleId}_single_2.fastq.gz" into merged_reads
     
     script:
     
     """
-    /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/NGmerge/NGmerge \
+    /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/tools/NGmerge-0.3/NGmerge \
     -1 ${read1} -2 ${read2} -o ${sampleId}_merged.fastq -f ${sampleId}_single
     """
 }
@@ -110,10 +79,10 @@ process InterleaveUnmergedReads {
     publishDir "$results_path/04_interleaved"
 
     input:
-    tuple sampleId, merged, read1, read2 from merged_reads
+    set sampleId, merged, read1, read2 from merged_reads
     
     output:
-    tuple sampleId, merged, "${sampleId}_interleaved.fq.gz" into merged_and_interleaved_reads
+    set sampleId, merged, "${sampleId}_interleaved.fq.gz" into merged_and_interleaved_reads
     
     script:
     
@@ -138,7 +107,7 @@ process AlignReads {
     val tuple_pack from phased_ref_reads_for_alignment
     
     output:
-    tuple sampleId, "${sampleId}.merged.fasta.gz", "${sampleId}.interleaved.fasta.gz" into aligned_reads
+    set sampleId, "${sampleId}.merged.fasta.gz", "${sampleId}.interleaved.fasta.gz" into aligned_reads
     
     script:
     sampleId = tuple_pack.get(0).get(0)
@@ -186,7 +155,7 @@ process CallEvents {
     val tuple_pack from aligned_reads_phased
     
     output:
-    tuple sampleId, "${sampleId}.stats.gz" into stats_file
+    set sampleId, "${sampleId}.stats.gz" into stats_file
     
     script:
     sampleId = tuple_pack.get(0).get(0)
@@ -236,7 +205,7 @@ process BreakdownFiles {
     val tuple_pack from stats_file_phased
     
     output:
-    tuple sampleId, "${sampleId}.perBase", "${sampleId}.topReadEvents", "${sampleId}.topReadEventsNew", "${sampleId}.topReadCounts", "${sampleId}.allReadCounts" into breakdown_files
+    set sampleId, "${sampleId}.perBase", "${sampleId}.topReadEvents", "${sampleId}.topReadEventsNew", "${sampleId}.topReadCounts", "${sampleId}.allReadCounts" into breakdown_files
     
     script:
     sampleId = tuple_pack.get(0).get(0)
@@ -275,7 +244,7 @@ process CallBaseEdits {
     val tuple_pack from stats_file_for_base_edits
     
     output:
-    tuple sampleId, "${sampleId}.baseEditCalls" into basecalls
+    set sampleId, "${sampleId}.baseEditCalls" into basecalls
     
     script:
     sampleId = tuple_pack.get(0).get(0)
@@ -306,10 +275,10 @@ process BaseEditingSummary {
     publishDir "$results_path/09_base_summary"
 
     input:
-    tuple sampleId, baseEditing from basecalls
+    set sampleId, baseEditing from basecalls
     
     output:
-    tuple sampleId, "${sampleId}_editing_summary.txt", "${sampleId}_editing_positions.txt" into baseEditingSummary
+    set sampleId, "${sampleId}_editing_summary.txt", "${sampleId}_editing_positions.txt" into baseEditingSummary
     
     script:
 

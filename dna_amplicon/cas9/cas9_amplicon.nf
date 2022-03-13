@@ -23,6 +23,7 @@ params.trim_read_bases
 */
 
 
+
 /*
  * Read in the sample table and convert entries into a channel of sample information 
  */
@@ -54,12 +55,12 @@ process CreateCutSitesFile {
     """
     cp ${reference} ${sampleId}.fa
 
-    scala -J-Xmx4g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/fasta_to_cutsites.scala \
-        ${sampleId}.fa \
-        ${targets} \
-        ${params.primer5} \
-        ${params.primer3} \
-        ${params.primers_extension}
+    python /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/fasta_to_cutsites.py \
+        --reference ${sampleId}.fa \
+        --sites ${targets} \
+        --forward_primer ${params.primer5} \
+        --reverse_primer ${params.primer3} \
+        --CRISPR_type ${params.crispr}
     """
 }
 /*
@@ -83,35 +84,47 @@ process FastqcReport {
     """
 }
 
-/*
- * Filter input reads, requiring that at least one of the paired reads align to the lineage recorder sequence
- */
-process FilterGenomicReads {
+process MergeUmis {
+    memory '20 GB'
     beforeScript 'chmod o+rw .'
-    publishDir "$results_path/03_filter_genomic_reads"
+    //errorStrategy 'ignore'
+    publishDir "$results_path/03_umi_collapse"
+
+    when:
+    params.umiLength
 
     input:
     set sampleId, reference, targets, read1, read2, cutsites, primers from reference_pack
-    
+
     output:
-    set sampleId, reference, targets, "${sampleId}.read.fq.gz", "${sampleId}.barcode.fq.gz", cutsites, primers into filtered_reads
-    file "${sampleId}_pre_post_reads.txt" into filtered_reads_analysis
-    
+    set sampleId, reference, targets, "${sampleId}_read1.fq.gz", "${sampleId}_read2.fq.gz", cutsites, primers into extracted_umis
+    tuple sampleId, "${sampleId}_read1.fq.gz", "${sampleId}_read2.fq.gz", "${sampleId}.umiCounts" into extracted_umis_stats
+
     script:
 
     """
-    zcat ${read1}| wc > ${sampleId}.pre.reads.txt
+    
+    java -jar -Xmx16g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/bin/MergeAndCall.jar \
+    UMIMerge \
+    -inputReads1=${read1} \
+    -inputReads2=${read2} \
+    -umiStart=${params.umiStart} \
+    -minimumUMIReads=${params.minUMIReadCount} \
+    -umiLength=${params.umiLength} \
+    -umiStatsFile=${sampleId}.umiCounts \
+    -primers=${primers} \
+    -primersToCheck=${params.primersToCheck} \
+    -primerMismatches=${params.primerMismatchCount} \
+    -outputReads1=${sampleId}_read1.fq.gz \
+    -outputReads2=${sampleId}_read2.fq.gz
 
-    python /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/filter_by_alignment.py \
-    --reference_genome ${params.organism_reference} \
-    --reference_gestalt_name ${params.bait_seq_name} \
-    --read1 ${read1} \
-    --barcode ${read2} \
-    --output_sample_prefix ${sampleId}
-
-    zcat ${sampleId}.read.fq.gz | wc > ${sampleId}.post.reads.txt
-    cat ${sampleId}.pre.reads.txt ${sampleId}.post.reads.txt > ${sampleId}_pre_post_reads.txt
     """
+}
+
+if (params.umiLength) {
+    filtered_reads = extracted_umis
+} else {
+    extracted_umis = genome_filtered_reads
 }
 
 /*
@@ -133,7 +146,6 @@ process MergeReads {
     -1 ${read1} -2 ${read2} -o ${sampleId}_merged.fastq -f ${sampleId}_single
     """
 }
-
 
 /*
  * Zip together read pairs from the unmerged reads into a single, interleaved file
@@ -160,8 +172,7 @@ process InterleaveUnmergedReads {
  * Zip together read-pairs from the unmerged reads into a single, interleaved file
  */
 process AlignReads {
-    memory '32 GB'
-    cpus 20
+    memory '12 GB'
     time '12h'
     beforeScript 'chmod o+rw .'
     publishDir "$results_path/06_alignment"
@@ -178,7 +189,7 @@ process AlignReads {
     cp ${mergedReads} merged.fastq.gz
     gunzip merged.fastq.gz
 
-    scala -J-Xmx4g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/align_merged_reads.scala \
+    scala -J-Xmx8g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/align_merged_reads.scala \
     /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/resources/EDNAFULL.Ns_are_zero \
     ${params.aligner} \
     merged.fastq \
@@ -191,7 +202,7 @@ process AlignReads {
     cp ${interleavedReads} interleavedReads.fastq.gz
     gunzip interleavedReads.fastq.gz
 
-    scala -J-Xmx4g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/align_merged_reads.scala \
+    scala -J-Xmx8g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/align_merged_reads.scala \
     /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/resources/EDNAFULL.Ns_are_zero \
     ${params.aligner} \
     interleavedReads.fastq \
@@ -238,7 +249,6 @@ process CallEvents {
     -cutSites=${cutsites} \
     -outputStats=${sampleId}.stats \
     -primersEachEnd=${primers} \
-    -sample=${sampleId} \
     -primerMismatches=${params.primerMismatchCount} \
     -primersToCheck=FORWARD \
     -requiredMatchingProp=${params.alignmentThreshold} \
@@ -264,7 +274,7 @@ process BreakdownFiles {
     set sampleId, reference, targets, stats, cutsites, primers from stats_output
     
     output:
-    tuple sampleId, reference, targets, "${sampleId}.perBase", "${sampleId}.topReadEvents", "${sampleId}.topReadEventsNew", "${sampleId}.topReadCounts", "${sampleId}.allReadCounts" into breakdown_files
+    tuple sampleId, reference, targets, "${sampleId}.perBase", "${sampleId}.topReadEvents", "${sampleId}.topReadEventsNew", "${sampleId}.topReadCounts", "${sampleId}.allReadCounts", cutsites into breakdown_files
     
     script:
 
@@ -287,35 +297,15 @@ process BreakdownFiles {
     """
 }
 
-process ReadFilterQC {
-    beforeScript 'chmod o+rw .'
-
-    publishDir "$results_path/09_read_filter_assessment"
-
-    input:
-    file pre_post from filtered_reads_analysis.toList()
-    
-    output:
-    path "genome_filter_assessment_mqc.tsv" into read_filter_assessment
-    
-    script:
-
-    """
-    python /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/read_qc.py \
-    --pre_post_stats ${pre_post.collect().join(",")} \
-    --output genome_filter_assessment_mqc.tsv
-    """
-}
-
 process StatsAssessment {
-    errorStrategy 'ignore'
-    publishDir "$results_path/10_stats_assessment"
+    publishDir "$results_path/09_stats_assessment"
 
     input:
     file stats from stats_file_eval.toList()
 
     output:
-    tuple "stat_meta_qc_assessment_mqc.tsv", "target_assessment_mqc.tsv" into stats_assessment
+    path "stat_meta_qc_assessment_mqc.tsv" into stats_assessment_qc
+    path "target_assessment_mqc.tsv" into stats_assessment_targets
     
     script:
 
@@ -326,3 +316,40 @@ process StatsAssessment {
     --output_stats stat_meta_qc_assessment_mqc.tsv
     """
 }
+
+process CreateSamplePlot {
+    publishDir "$results_path/10_sample_plot"
+
+    input:
+    tuple sample, reference, targets, perBase, topReadEvents, topReadEventsNew, topReadCounts, allReadCounts, cutsites from breakdown_files
+
+    output:
+    path "${sample}/read_editing_mutlihistogram.html" into html_file
+    path "${sample}/read_editing_mutlihistogram.js" into js_file
+    path "${sample}/JS_files.js" into js_vars
+    tuple "${sample}/${sample}.perBase", "${sample}/${sample}.topReadEvents", "${sample}/${sample}.topReadEventsNew", "${sample}/${sample}.topReadCounts", "${sample}/${sample}.allReadCounts", "${sample}/${sample}.cutSites" into per_base_info
+    tuple sample, "${sample}/" into sample_dir
+    
+    script:
+    """
+
+    mkdir ${sample}
+    cp /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/resources/plots/cas9/read_editing_mutlihistogram.html ./${sample}/
+    cp /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/resources/plots/cas9/read_editing_mutlihistogram.js ./${sample}/
+
+    cp ${perBase} ${sample}/${sample}.perBase
+    cp ${topReadEvents} ${sample}/${sample}.topReadEvents
+    cp ${topReadEventsNew} ${sample}/${sample}.topReadEventsNew
+    cp ${topReadCounts} ${sample}/${sample}.topReadCounts
+    cp ${allReadCounts} ${sample}/${sample}.allReadCounts
+    cp ${cutsites} ${sample}/${sample}.cutSites
+
+    echo var occurance_file = \\"${sample}.topReadCounts\\" >> ${sample}/JS_files.js
+    echo var top_read_melted_to_base = \\"${sample}.topReadEventsNew\\" >> ${sample}/JS_files.js
+    echo var per_base_histogram_data = \\"${sample}.perBase\\" >> ${sample}/JS_files.js
+    echo var cut_site_file = \\"${sample}.cutSites\\" >> ${sample}/JS_files.js
+    python /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/copy_to_web.py --input_dir ./${sample}/ --sample ${sample} --project ${params.project} --webdir ${params.webdir}
+
+    """
+}
+

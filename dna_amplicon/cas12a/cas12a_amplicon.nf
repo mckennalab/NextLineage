@@ -259,7 +259,7 @@ process BreakdownFiles {
     set sampleId, reference, targets, stats, cutsites, primers from stats_output
     
     output:
-    tuple sampleId, reference, targets, "${sampleId}.perBase", "${sampleId}.topReadEvents", "${sampleId}.topReadEventsNew", "${sampleId}.topReadCounts", "${sampleId}.allReadCounts", cutsites into breakdown_files
+    tuple sampleId, reference, targets, "${sampleId}.perBase", "${sampleId}.topReadEvents", "${sampleId}.topReadEventsNew", "${sampleId}.topReadCounts", "${sampleId}.allReadCounts", "${sampleId}_event_length_histrogram.txt", cutsites into breakdown_files
     
     script:
 
@@ -277,6 +277,10 @@ process BreakdownFiles {
     ${sampleId}.topReadEventsNew \
     ${params.convert_unknown_to_none} \
     ${reference}
+
+    python /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/create_length_histogram.py \
+    --compressed_stats_file ${stats} \
+    --output ${sampleId}_event_length_histrogram.txt
 
     rm sample.stats
     """
@@ -306,7 +310,7 @@ process CreateSamplePlot {
     publishDir "$results_path/10_sample_plot"
 
     input:
-    tuple sample, reference, targets, perBase, topReadEvents, topReadEventsNew, topReadCounts, allReadCounts, cutsites from breakdown_files
+    tuple sample, reference, targets, perBase, topReadEvents, topReadEventsNew, topReadCounts, allReadCounts, event_lengths, cutsites from breakdown_files
 
     output:
     path "${sample}/read_editing_mutlihistogram.html" into html_file
@@ -321,6 +325,8 @@ process CreateSamplePlot {
     mkdir ${sample}
     cp /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/resources/plots/cas12a/read_editing_mutlihistogram.html ./${sample}/
     cp /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/resources/plots/cas12a/read_editing_mutlihistogram.js ./${sample}/
+    cp /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/resources/plots/cas12a/edit_lengths.html ./${sample}/
+    cp /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/resources/plots/cas12a/draw_figure_1_histograms.js ./${sample}/
 
     cp ${perBase} ${sample}/${sample}.perBase
     cp ${topReadEvents} ${sample}/${sample}.topReadEvents
@@ -328,11 +334,14 @@ process CreateSamplePlot {
     cp ${topReadCounts} ${sample}/${sample}.topReadCounts
     cp ${allReadCounts} ${sample}/${sample}.allReadCounts
     cp ${cutsites} ${sample}/${sample}.cutSites
+    cp ${event_lengths} ${sample}/${sample}_event_lengths.txt
 
     echo var occurance_file = \\"${sample}.topReadCounts\\" >> ${sample}/JS_files.js
     echo var top_read_melted_to_base = \\"${sample}.topReadEventsNew\\" >> ${sample}/JS_files.js
     echo var per_base_histogram_data = \\"${sample}.perBase\\" >> ${sample}/JS_files.js
     echo var cut_site_file = \\"${sample}.cutSites\\" >> ${sample}/JS_files.js
+    echo var event_file = \\"${sample}_event_lengths.txt\\" >> ${sample}/JS_files.js
+
     python /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/copy_to_web.py --input_dir ./${sample}/ --sample ${sample} --project ${params.project} --webdir ${params.webdir}
 
     """

@@ -255,14 +255,14 @@ function redrawTheTopHistogram() {
 	    // this is very hacky -- also deal with some people not being able to camel-case their columns like what was asked of them
 	    if (typeof d.cutPos === 'undefined') {
 		if ((+d.cutpos) - (+d.position) > 10)
-		    return xEvents(+d.cutpos + 4)
+		    return xEvents(+d.cutpos + 3)
 		else
-		    return xEvents(+d.position - 4)
+		    return xEvents(+d.position - 3)
 	    } else {
 		if ((+d.cutPos) - (+d.position) > 10)
-		    return xEvents(+d.cutPos + 4)
+		    return xEvents(+d.cutPos + 3)
 		else
-		    return xEvents(+d.position - 4)
+		    return xEvents(+d.position - 3)
 	    }
         })
         .attr('y', 0)
