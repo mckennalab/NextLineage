@@ -64,7 +64,7 @@ setup:
 
 - ```minUMIReadCount```: when using UMIs, how many reads are required to call the UMI successfully captured (and for it to be used in downstream analysis). 
 
-- ```primersToCheck```: for primer5 and primer3, do we want to check for both (_BOTH_), not require either (_NEITHER_), or just require the primer5 (_FORWARD_) or just the primer3 (_REVERSE_). Generally we set this to _BOTH_, though in some cases (like scRNA-seq) we can only rely on one of the primers being present (_FORWARD_). 
+- ```primersToCheck```: for primer5 and primer3, do we want to check for both (_BOTH_), not require either (_NONE_), or just require the primer5 (_FORWARD_) or just the primer3 (_REVERSE_). Generally we set this to _BOTH_, though in some cases (like scRNA-seq) we can only rely on one of the primers being present (_FORWARD_). 
 
 - ```crispr```: which CRISPR enzyme we're using. In this case, cas12a. 
 
