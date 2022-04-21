@@ -123,12 +123,12 @@ process MergeReads {
     set sampleId, reference, targets, read1, read2, cutsites, primers from filtered_reads
     
     output:
-    set sampleId, reference, targets, "${sampleId}_merged.fastq.gz", "${sampleId}_single_1.fastq.gz", "${sampleId}_single_2.fastq.gz", cutsites, primers into merged_reads
+    set sampleId, reference, targets, "out.extendedFrags.fastq.gz", "out.notCombined_1.fastq", "out.notCombined_2.fastq", cutsites, primers into merged_reads
     
     script:
     """
-    /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/tools/NGmerge-0.3/NGmerge \
-    -1 ${read1} -2 ${read2} -o ${sampleId}_merged.fastq -f ${sampleId}_single
+    /dartfs/rc/lab/M/McKennaLab/resources/tools/bin/flash --min-overlap 10 --max-mismatch-density 0.02 ${read1} ${read2}
+    gzip out.extendedFrags.fastq
     """
 }
 

@@ -180,7 +180,7 @@ process CallEvents {
     -primersEachEnd=${primers} \
     -sample=${sampleId} \
     -primerMismatches=3 \
-    -primersToCheck=BOTH \
+    -primersToCheck=FORWARD \
     -requiredMatchingProp=0.85 \
     -requiredRemainingBases=75
 
@@ -244,7 +244,7 @@ process CallBaseEdits {
     val tuple_pack from stats_file_for_base_edits
     
     output:
-    set sampleId, "${sampleId}.baseEditCalls" into basecalls
+    set sampleId, "${sampleId}.allele_counts" into basecalls
     
     script:
     sampleId = tuple_pack.get(0).get(0)
@@ -254,37 +254,6 @@ process CallBaseEdits {
     stats = tuple_pack.get(1).get(1)
 
     """
-    cp ${stats} ./sample.stats.gz
-    gunzip ./sample.stats.gz
-
-    bash /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/base_editing_multi_target_analysis.sh \
-    sample.stats \
-    ${sampleId} \
-    ${sampleId}.baseEditCalls \
-    ${cutSites}
-
-    rm sample.stats
-    """
-}
-
-/*
- * Generate a number of derivative files from the stats 
- */
-process BaseEditingSummary {
-    beforeScript 'chmod o+rw .'
-    publishDir "$results_path/09_base_summary"
-
-    input:
-    set sampleId, baseEditing from basecalls
-    
-    output:
-    set sampleId, "${sampleId}_editing_summary.txt", "${sampleId}_editing_positions.txt" into baseEditingSummary
-    
-    script:
-
-    """
-    Rscript /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/base_editing_summary.R \
-    ${sampleId} \
-    ${baseEditing}
+    cut -f 24 <(zcat ${stats}) | sort | uniq -c | sort -r -n > ${sampleId}.allele_counts 
     """
 }
