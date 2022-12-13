@@ -1,0 +1,2 @@
+sample	reference	targets	reads
+mega_cas12a	/analysis/2022_12_13_Mega_trail/reference_masked.fa	/analysis/2022_12_13_Mega_trail/reference_masked.sites	/analysis/2022_12_13_Mega_trail/all_reads.fq.gz
