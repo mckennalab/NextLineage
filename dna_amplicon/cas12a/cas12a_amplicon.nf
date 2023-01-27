@@ -267,7 +267,7 @@ process BreakdownFiles {
     cp ${stats} ./sample.stats.gz
     gunzip ./sample.stats.gz
 
-    scala -J-Xmx4g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/stats_to_javascript_tables.scala \
+    /home/Kiewit/f003w5r/.local/share/coursier/bin/scala -J-Xmx4g /dartfs/rc/lab/M/McKennaLab/projects/nextflow_lineage/src/stats_to_javascript_tables.scala \
     sample.stats \
     ${sampleId}.perBase \
     ${sampleId}.topReadEvents \
